@@ -50,6 +50,7 @@ node scripts/scrape-ads-playwright.cjs <client-name> \
 | `--keywords "kw1,kw2"` | Search terms (comma-separated) |
 | `--location "City,State,Country"` | Google canonical location for geo-targeting |
 | `--project <id>` | Load keywords + location from `projects_list.json` |
+| `--proxy <url>` | Route browser through a proxy (see [VPN / Proxy](#vpn--proxy-required-for-cross-country-scraping)) |
 | `--root <path>` | Output directory (default: current directory) |
 | `--dry-run` | Preview config without launching browser |
 
@@ -66,15 +67,56 @@ node scripts/scrape-ads-playwright.cjs acme-corp \
   --keywords "google ads agency" \
   --location "New York,New York,United States"
 
+# With a proxy (for cross-country scraping)
+node scripts/scrape-ads-playwright.cjs acme-corp \
+  --keywords "home care agency" \
+  --location "London,England,United Kingdom" \
+  --proxy "socks5://127.0.0.1:1080"
+
 # Dry run (preview only)
 node scripts/scrape-ads-playwright.cjs acme-corp \
   --keywords "plumber near me" \
   --dry-run
 ```
 
+## VPN / Proxy (Required for Cross-Country Scraping)
+
+**This is the #1 gotcha.** If you're scraping ads for a country you're not physically in, you'll get 0 ads unless you use a VPN or proxy.
+
+KuramaSerp uses UULE encoding to tell Google your location — and this works perfectly for **organic results and local pack**. But **Google Ads uses your real IP address** for the ad auction. Advertisers targeting "People physically IN this location" won't serve ads to an IP outside that region, even with perfect UULE geo-targeting.
+
+| What | What Controls It |
+|------|-----------------|
+| Organic results, local pack | UULE (works without VPN) |
+| **Google Ads auction** | **Your real IP address** |
+
+### How to Fix It
+
+**Option 1: VPN (simplest)** — Connect to a server in the target country before running the script.
+
+**Option 2: `--proxy` flag** — Route browser traffic through a proxy:
+
+```bash
+# SOCKS5 proxy (e.g. SSH tunnel to a UK VPS)
+node scripts/scrape-ads-playwright.cjs acme-corp \
+  --keywords "plumber near me" \
+  --location "London,England,United Kingdom" \
+  --proxy "socks5://127.0.0.1:1080"
+
+# HTTP proxy with auth (e.g. Bright Data, Oxylabs)
+node scripts/scrape-ads-playwright.cjs acme-corp \
+  --keywords "plumber near me" \
+  --location "London,England,United Kingdom" \
+  --proxy "http://user:pass@gb.proxy.io:22225"
+```
+
+Supported formats: `socks5://host:port`, `http://host:port`, `http://user:pass@host:port`
+
+**Cheapest option:** A small UK/US VPS (Hetzner, DigitalOcean — ~$4/mo), then SSH tunnel: `ssh -D 1080 user@vps` and pass `--proxy "socks5://127.0.0.1:1080"`.
+
 ## Geo Targeting
 
-KuramaSerp uses **UULE encoding** — Google's own location system. Results are served as if the searcher is physically in that location, regardless of your actual IP.
+KuramaSerp uses **UULE encoding** — Google's own location system used in Ads Editor. Combined with a matching IP (via VPN or proxy), this gives you results identical to what a real searcher in that location would see.
 
 ### Supported Markets
 
@@ -91,8 +133,9 @@ Add more markets by editing `COUNTRY_PROFILES` in the script.
 
 - Node.js 18+
 - Playwright (`npm install playwright` — downloads Chromium ~400MB on first run)
+- **VPN or proxy** in the target country (for ad scraping — see above)
 
-That's it. No API keys, no `.env`, no accounts.
+No API keys, no `.env`, no accounts.
 
 ## How It Works
 
