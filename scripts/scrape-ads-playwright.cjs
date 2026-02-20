@@ -607,6 +607,6 @@ main().catch(err => {
  * ║                                                                            ║
  * ║  Web:      https://agenticppcads.com                                       ║
  * ║  LinkedIn: https://linkedin.com/in/kudachinhara                            ║
- * ║  X:        https://x.com/AIPPCKuda                                         ║
+ * ║  X:        https://x.com/kudachinhara                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
