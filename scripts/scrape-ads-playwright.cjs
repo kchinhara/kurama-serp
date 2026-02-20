@@ -9,8 +9,8 @@
  * Why this exists:
  *   SERP APIs (SerpAPI, ValueSERP, DataForSEO, etc.) can scrape ads — but
  *   ad scraping is typically a premium feature. ValueSERP charges 4 credits
- *   per scrape instead of 1 when ads are included. Free/basic tiers often
- *   return 0 ads because Google doesn't serve ads to standard datacenter IPs.
+ *   per scrape instead of 1 when ads are included. On free or basic tiers,
+ *   ad results are limited or unavailable entirely.
  *   KuramaSerp uses a real Chromium browser on your machine — zero per-scrape
  *   cost, and you see exactly what a real searcher sees, including all paid ads.
  *

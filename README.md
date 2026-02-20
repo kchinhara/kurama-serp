@@ -2,7 +2,7 @@
 
 Scrape competitor Google Ads from real search results. No API keys. No per-scrape costs.
 
-SERP APIs (SerpAPI, ValueSERP, DataForSEO) charge premium credits for ad data and often return 0 ads — because Google doesn't serve ads to datacenter IPs. KuramaSerp runs a real Chromium browser on your machine, so you see exactly what a searcher sees.
+SERP APIs (SerpAPI, ValueSERP, DataForSEO) charge premium credits for ad data — and on free or basic tiers, ad results are limited or unavailable entirely. KuramaSerp eliminates that cost by running a real Chromium browser on your machine, so you see exactly what a searcher sees.
 
 ## What You Get
 
