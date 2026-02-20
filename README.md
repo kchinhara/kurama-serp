@@ -121,4 +121,4 @@ We build AI-powered Google Ads tools for agencies and in-house teams.
 
 - Web: [agenticppcads.com](https://agenticppcads.com)
 - LinkedIn: [linkedin.com/in/kudachinhara](https://linkedin.com/in/kudachinhara)
-- X: [@kudachinhara](https://x.com/AIPPCKuda)
+- X: [@kudachinhara](https://x.com/kudachinhara)
