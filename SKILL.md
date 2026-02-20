@@ -3,7 +3,7 @@ name: kurama-serp
 description: Zero-cost Google Ads SERP scraper. Uses a real Chromium browser via Playwright to scrape competitor ads from Google Search with precise geo-targeting. Outputs raw JSON, structured competitive data, and a markdown report with messaging pattern detection. No API keys, no per-scrape costs.
 license: MIT
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   author: Kuda Chinhara
   url: https://agenticppcads.com
 ---
@@ -27,6 +27,19 @@ That's it. No API keys, no `.env`, no accounts.
 
 **Requirements:** Node.js 18+, Playwright npm package.
 
+### VPN Requirement for Ad Scraping
+
+**If you're scraping ads for a country you're not physically in, you need a VPN or proxy with an IP in the target country.** This is non-optional for ad data — Google Ads uses your real IP address to determine ad auction eligibility, and UULE geo-targeting alone won't override it.
+
+For example, scraping UK ads from outside the UK will return 0 ads unless you:
+- Connect to a **UK VPN** before running the script, OR
+- Pass `--proxy "socks5://uk-server:1080"` to route browser traffic through a UK exit node
+
+Cheapest options:
+- **VPN service** (NordVPN, Mullvad, etc.) — connect to target country server
+- **SSH tunnel** to a VPS in the target country — `ssh -D 1080 user@uk-vps`, then `--proxy "socks5://127.0.0.1:1080"`
+- **Residential proxy** (Bright Data, Oxylabs) — `--proxy "http://user:pass@gb.proxy.io:22225"`
+
 ---
 
 ## Triggers
@@ -46,6 +59,7 @@ That's it. No API keys, no `.env`, no accounts.
 | Client name | positional (required) | `acme-corp` |
 | Keywords | `--keywords "kw1,kw2,kw3"` | `--keywords "plumber near me,emergency plumber"` |
 | Location | `--location "City,State,Country"` | `--location "London,England,United Kingdom"` |
+| Proxy | `--proxy <url>` | `--proxy "socks5://uk-server:1080"` |
 | Project preset | `--project <id>` | `--project proj_abc123` |
 | Preview only | `--dry-run` | Shows config, no browser |
 | Output root | `--root <path>` | `--root /path/to/project` (default: cwd) |
@@ -155,7 +169,32 @@ The summary automatically scans all ad copy for these patterns:
 
 ## Geo Targeting
 
-KuramaSerp uses **UULE encoding** — Google's own geo-targeting system used in Ads Editor. This tells Google to serve results as if the searcher is in that exact location, regardless of your actual IP.
+KuramaSerp uses **UULE encoding** — Google's own geo-targeting system used in Ads Editor. This tells Google to serve results as if the searcher is in that exact location.
+
+### UULE vs IP — Why Proxy Matters for Ads
+
+UULE controls the **location context** for organic results and local pack. But **Google Ads uses your real IP** for the ad auction. Advertisers targeting "People physically IN this location" won't serve ads to an IP outside that region — even with perfect UULE.
+
+| What | Controlled by |
+|------|---------------|
+| Organic results, local pack | UULE (works without proxy) |
+| Ad auction eligibility | **Real IP address** |
+| "People IN location" targeting | **Real IP address** |
+| "People searching FOR location" targeting | UULE + query context |
+
+**If scraping from outside the target country, use `--proxy` with an exit node in the target market:**
+
+```bash
+node {SKILL_DIR}/scripts/scrape-ads-playwright.cjs acme-corp \
+  --keywords "plumber near me" \
+  --location "London,England,United Kingdom" \
+  --proxy "socks5://uk-proxy:1080"
+```
+
+Supported proxy formats:
+- `socks5://host:port`
+- `http://host:port`
+- `http://user:pass@host:port`
 
 ### Location Format
 
@@ -209,7 +248,8 @@ Expected format:
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| 0 ads found | Budget exhausted, no ads running, or wrong geo | Try different time of day or verify keywords have ads |
+| 0 ads found, `#tads` empty | **Your IP is outside the target country** | Connect VPN to target country or use `--proxy` — this is the #1 cause |
+| 0 ads found, no `#tads` | Budget exhausted or no ads running | Try during business hours in the target market (9-11am local) |
 | CAPTCHA / unusual traffic | First run or cleared profile | Run again — persistent profile builds trust over time |
 | Playwright not found | Not installed | `npm install playwright` |
 | Chromium download hangs | Firewall or slow connection | Wait or retry — ~400MB download |

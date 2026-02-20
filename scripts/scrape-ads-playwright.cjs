@@ -134,7 +134,7 @@ const KEYWORD_PRESETS = {
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
 function parseArgs(args) {
-  const parsed = { client: null, keywords: null, location: null, project: null, dryRun: false };
+  const parsed = { client: null, keywords: null, location: null, project: null, proxy: null, dryRun: false };
   let i = 0;
   while (i < args.length) {
     if (args[i] === '--keywords') {
@@ -143,6 +143,8 @@ function parseArgs(args) {
       parsed.location = args[++i];
     } else if (args[i] === '--project') {
       parsed.project = args[++i];
+    } else if (args[i] === '--proxy') {
+      parsed.proxy = args[++i];
     } else if (args[i] === '--root') {
       i++; // skip value — already handled at module level
     } else if (args[i] === '--dry-run') {
@@ -175,110 +177,127 @@ function sleep(ms) {
 async function extractAds(page, keyword) {
   const now = new Date().toISOString();
 
-  // Google Ads live inside <div role="region"> elements with an "Ads" heading.
-  // We find all ad regions, then extract individual ads from each.
+  // Google Ads extraction — Feb 2026 structure:
+  //   Each ad lives in a [data-text-ad] element.
+  //   Titles are in div[role="heading"] (NOT h3 — Google changed this).
+  //   Links use <a> with data-pcu (destination) and data-rw (click tracking).
+  //   We find all [data-text-ad] elements and extract structured data from each.
   const ads = await page.evaluate(() => {
     const results = [];
+    const seenTitles = new Set();
+    const skipLabels = ['', 'ads', 'sponsored', 'sponsored results',
+      'sponsored result', 'hide sponsored results', 'hide sponsored result'];
 
-    // Find all ad regions (role="region" containing an h1 "Ads")
-    const regions = document.querySelectorAll('[role="region"]');
+    const adElements = document.querySelectorAll('[data-text-ad]');
 
-    regions.forEach(region => {
-      const heading = region.querySelector('h1');
-      if (!heading || heading.textContent.trim() !== 'Ads') return;
+    adElements.forEach((adEl, idx) => {
+      // ── Title: div[role="heading"] or h3 (fallback for older layouts) ──
+      const headingEl = adEl.querySelector('[role="heading"], h3');
+      if (!headingEl) return;
+      const title = headingEl.textContent.trim();
+      if (skipLabels.includes(title.toLowerCase()) || seenTitles.has(title)) return;
+      seenTitles.add(title);
 
-      // Determine if this is top or bottom based on position
-      const isBottom = region.getBoundingClientRect().top > 600;
-      const blockPos = isBottom ? 'bottom' : 'top';
+      // ── Position: top vs bottom ──
+      // Check if this ad is inside #tads (top) or #bottomads (bottom)
+      let blockPos = 'top';
+      if (adEl.closest('#bottomads')) {
+        blockPos = 'bottom';
+      } else if (!adEl.closest('#tads')) {
+        // Fallback: use vertical position on page
+        blockPos = adEl.getBoundingClientRect().top > 600 ? 'bottom' : 'top';
+      }
 
-      // Each ad block has an h3 heading (the clickable title)
-      const adHeadings = region.querySelectorAll('h3');
-      const seen = new Set();
-      let pos = 0;
+      // ── Link: <a> with data-pcu or data-rw (Google's ad link attributes) ──
+      let link = '';
+      const adLink = adEl.querySelector('a[data-pcu]') || adEl.querySelector('a[data-rw]') ||
+                     headingEl.closest('a[href]') || adEl.querySelector('a[href*="aclk"]') ||
+                     adEl.querySelector('a[href^="http"]');
+      if (adLink) {
+        // data-pcu = clean destination URL, href = may be clean or tracking
+        link = adLink.getAttribute('data-pcu') || adLink.href;
+      }
 
-      adHeadings.forEach(h3 => {
-        const title = h3.textContent.trim();
-
-        // Skip non-ad headings and duplicates
-        if (!title || title === 'Ads' || title === 'Sponsored results' ||
-            title === 'Sponsored result' || title === 'Hide sponsored results' ||
-            title === 'Hide sponsored result' || seen.has(title)) return;
-        seen.add(title);
-        pos++;
-
-        // Walk up to find the ad container (closest ancestor with a link)
-        let container = h3.closest('[data-text-ad]') || h3.parentElement?.parentElement?.parentElement;
-        if (!container) container = h3.parentElement;
-
-        // Find the destination link — look for the link wrapping or near the h3
-        let link = '';
-        let displayedLink = '';
-        const parentLink = h3.closest('a[href]');
-        if (parentLink) {
-          link = parentLink.href;
-        } else {
-          // Look for a sibling or ancestor link
-          const nearbyLink = container.querySelector('a[href*="aclk"], a[href^="http"]');
-          if (nearbyLink) link = nearbyLink.href;
-        }
-
-        // Find displayed link text (the green URL line)
-        const adBlock = h3.closest('[role="region"]') || container;
-        // Look for the domain display near this heading's parent
-        const linkParent = h3.parentElement?.parentElement;
-        if (linkParent) {
-          const spans = linkParent.querySelectorAll('span');
-          spans.forEach(s => {
-            const t = s.textContent.trim();
-            if (t.startsWith('https://') || t.startsWith('http://') || t.includes('.co.uk') || t.includes('.com') || t.includes('.org')) {
-              if (!displayedLink) displayedLink = t;
-            }
-          });
-        }
-
-        // Find description — text block near the heading that isn't a link/button
-        let description = '';
-        // Walk siblings of the heading's container to find description text
-        const walkParent = h3.parentElement?.parentElement?.parentElement;
-        if (walkParent) {
-          const textNodes = walkParent.querySelectorAll('div, span');
-          const descCandidates = [];
-          textNodes.forEach(n => {
-            const t = n.textContent.trim();
-            // Description-like text: longer than 40 chars, not a URL, not the title
-            if (t.length > 40 && !t.startsWith('http') && t !== title &&
-                !t.includes('Why this ad') && n.closest('h3') === null) {
-              descCandidates.push(t);
-            }
-          });
-          // Pick the longest unique candidate
-          if (descCandidates.length > 0) {
-            description = descCandidates.sort((a, b) => b.length - a.length)[0];
+      // ── Displayed link: the visible URL shown in the ad ──
+      let displayedLink = '';
+      // Google shows the URL in spans near the heading, often with cite elements
+      const citeEl = adEl.querySelector('cite');
+      if (citeEl) {
+        displayedLink = citeEl.textContent.trim();
+      } else {
+        // Fallback: find span containing a URL-like string
+        adEl.querySelectorAll('span').forEach(s => {
+          if (displayedLink) return;
+          const t = s.textContent.trim();
+          if ((t.startsWith('https://') || t.startsWith('http://') || t.startsWith('www.')) &&
+              t.length < 120 && !t.includes(' ')) {
+            displayedLink = t;
           }
-        }
-
-        // Find sitelinks (list items within the ad)
-        const sitelinks = [];
-        const sitelinkList = walkParent ? walkParent.querySelector('ul, [role="list"]') : null;
-        if (sitelinkList) {
-          sitelinkList.querySelectorAll('li').forEach(li => {
-            const text = li.textContent.trim();
-            if (text && text.length < 60) {
-              sitelinks.push({ title: text, link: '' });
-            }
-          });
-        }
-
-        results.push({
-          title,
-          link,
-          displayed_link: displayedLink,
-          description,
-          sitelinks,
-          extensions: [],
-          position: pos,
-          block_position: blockPos,
         });
+      }
+
+      // ── Description: longest text block that isn't the title or URL ──
+      let description = '';
+      const descCandidates = [];
+      adEl.querySelectorAll('div, span').forEach(n => {
+        const t = n.textContent.trim();
+        if (t.length > 40 && t !== title && !t.startsWith('http') &&
+            !t.includes('Why this ad') && !t.includes('Hide sponsored') &&
+            !n.closest('[role="heading"]') && !n.querySelector('[role="heading"]')) {
+          descCandidates.push(t);
+        }
+      });
+      if (descCandidates.length > 0) {
+        // Prefer medium-length candidates (pure description, not parent container text)
+        // Sort by length descending, then pick the first one under 500 chars
+        // (very long ones are usually parent containers that include everything)
+        descCandidates.sort((a, b) => b.length - a.length);
+        description = descCandidates.find(d => d.length < 500) || descCandidates[0];
+      }
+
+      // ── Sitelinks: list items or link groups within the ad ──
+      const sitelinks = [];
+      // Look for sitelink containers (usually a grid/list of links below the ad)
+      const sitelinkContainer = adEl.querySelector('ul, [role="list"]');
+      if (sitelinkContainer) {
+        sitelinkContainer.querySelectorAll('li, a').forEach(el => {
+          const text = el.textContent.trim();
+          if (text && text.length < 60 && text !== title) {
+            const slLink = el.tagName === 'A' ? el.href : (el.querySelector('a')?.href || '');
+            sitelinks.push({ title: text, link: slLink });
+          }
+        });
+      }
+      // Fallback: look for sitelink-like groups (multiple short links)
+      if (sitelinks.length === 0) {
+        const allLinks = adEl.querySelectorAll('a[href]');
+        allLinks.forEach(a => {
+          const text = a.textContent.trim();
+          // Sitelinks: short text, not the main title, not the displayed URL
+          if (text && text.length > 3 && text.length < 50 &&
+              text !== title && !text.startsWith('http') && a !== adLink) {
+            sitelinks.push({ title: text, link: a.href });
+          }
+        });
+      }
+
+      // ── Extensions: callout/structured snippets text ──
+      const extensions = [];
+      // Extensions often appear as short inline text segments
+      adEl.querySelectorAll('[role="listitem"], .YhemCb').forEach(ext => {
+        const t = ext.textContent.trim();
+        if (t && t.length < 80 && t !== title) extensions.push(t);
+      });
+
+      results.push({
+        title,
+        link,
+        displayed_link: displayedLink,
+        description,
+        sitelinks,
+        extensions,
+        position: idx + 1,
+        block_position: blockPos,
       });
     });
 
@@ -439,6 +458,7 @@ async function main() {
     console.error('  --keywords "kw1,kw2"                  Override keywords');
     console.error('  --location "City,State,Country"       Set geo target');
     console.error('  --project <project_id>               Load from projects_list.json');
+    console.error('  --proxy <url>                        Route through proxy (e.g. socks5://host:port)');
     console.error('  --root <path>                        Project root (default: cwd)');
     console.error('  --dry-run                            Preview without browser');
     console.error('\nPresets:', Object.keys(KEYWORD_PRESETS).join(', ') || '(none)');
@@ -482,6 +502,7 @@ async function main() {
   console.log(`   Domain:   ${domain}`);
   console.log(`   Locale:   ${geo.locale} | TZ: ${geo.timezoneId} | gl=${geo.gl}`);
   if (geo.uule) console.log(`   UULE:     ${geo.uule.slice(0, 30)}...`);
+  console.log(`   Proxy:    ${args.proxy || 'none (using direct IP)'}`);
   console.log(`   Root:     ${ROOT}`);
   console.log(`   Searches: ${keywords.length}\n`);
 
@@ -494,12 +515,39 @@ async function main() {
 
   // Use persistent Chrome profile so Google trusts us (no CAPTCHA)
   const profileDir = path.join(ROOT, '.playwright-profile');
-  const context = await chromium.launchPersistentContext(profileDir, {
+  const launchOptions = {
     headless: false,
     locale: geo.locale,
     timezoneId: geo.timezoneId,
     args: ['--disable-blink-features=AutomationControlled'],
-  });
+  };
+
+  // Proxy support — route browser traffic through a proxy server
+  // so Google sees the proxy's IP (e.g. UK) instead of your real IP.
+  // This is critical for ad serving: Google Ads targets by physical IP,
+  // and UULE alone won't override it for "People IN this location" targeting.
+  //
+  // Formats:  --proxy "socks5://host:port"
+  //           --proxy "http://host:port"
+  //           --proxy "http://user:pass@host:port"
+  if (args.proxy) {
+    const proxyConfig = { server: args.proxy };
+    // Extract credentials if embedded in URL (user:pass@host)
+    try {
+      const parsed = new URL(args.proxy);
+      if (parsed.username) {
+        proxyConfig.server = `${parsed.protocol}//${parsed.host}`;
+        proxyConfig.username = decodeURIComponent(parsed.username);
+        proxyConfig.password = decodeURIComponent(parsed.password);
+      }
+    } catch {
+      // Not a parseable URL — pass server string as-is to Playwright
+    }
+    launchOptions.proxy = proxyConfig;
+    console.log(`   🔒 Proxy configured: ${proxyConfig.server}${proxyConfig.username ? ' (with auth)' : ''}`);
+  }
+
+  const context = await chromium.launchPersistentContext(profileDir, launchOptions);
 
   const page = context.pages()[0] || await context.newPage();
 
@@ -543,6 +591,95 @@ async function main() {
         const ads = await extractAds(page, kw);
         allAds.push(...ads);
         console.log(`${ads.length} ads found`);
+
+        // Debug: save screenshot and log page structure when no ads found
+        if (ads.length === 0) {
+          const debugDir = path.join(ROOT, 'clients', args.client, 'ads', 'debug');
+          fs.mkdirSync(debugDir, { recursive: true });
+          const safeName = kw.replace(/[^a-z0-9]/gi, '_').slice(0, 50);
+          await page.screenshot({
+            path: path.join(debugDir, `${safeName}.png`),
+            fullPage: false,
+          });
+
+          // Also take full-page screenshot to catch ads below fold
+          await page.screenshot({
+            path: path.join(debugDir, `${safeName}_full.png`),
+            fullPage: true,
+          });
+
+          const pageInfo = await page.evaluate(() => {
+            const regions = document.querySelectorAll('[role="region"]');
+            const regionList = [];
+            regions.forEach(r => {
+              const h = r.querySelector('h1, h2');
+              regionList.push(h ? h.textContent.trim() : '(no heading)');
+            });
+
+            // Deep inspect #tads and #bottomads
+            const tads = document.querySelector('#tads');
+            const bads = document.querySelector('#bottomads');
+            const tadsInfo = tads ? {
+              childCount: tads.children.length,
+              innerHTML: tads.innerHTML.slice(0, 800),
+              innerText: tads.innerText.slice(0, 400),
+              h3Count: tads.querySelectorAll('h3').length,
+              linkCount: tads.querySelectorAll('a').length,
+              divCount: tads.querySelectorAll('div').length,
+            } : null;
+            const badsInfo = bads ? {
+              childCount: bads.children.length,
+              innerHTML: bads.innerHTML.slice(0, 800),
+              innerText: bads.innerText.slice(0, 400),
+              h3Count: bads.querySelectorAll('h3').length,
+            } : null;
+
+            // Dump first [data-text-ad] element
+            const firstAd = document.querySelector('[data-text-ad]');
+            const firstAdHtml = firstAd ? firstAd.outerHTML.slice(0, 2000) : null;
+
+            // Look for any "Sponsored" or "Ad" labels anywhere
+            const allText = document.body?.innerText || '';
+            const sponsoredIdx = allText.toLowerCase().indexOf('sponsored');
+            const adLabelIdx = allText.match(/\bAd\b·|\bAd\b •/);
+
+            return {
+              firstAdHtml,
+              title: document.title,
+              url: location.href,
+              regions: regionList,
+              hasTads: !!tads,
+              hasBottomAds: !!bads,
+              hasDataTextAd: document.querySelectorAll('[data-text-ad]').length,
+              hasSponsored: sponsoredIdx !== -1,
+              sponsoredContext: sponsoredIdx !== -1 ? allText.slice(Math.max(0, sponsoredIdx - 20), sponsoredIdx + 60) : null,
+              adLabel: adLabelIdx ? adLabelIdx[0] : null,
+              tadsInfo,
+              badsInfo,
+            };
+          });
+          console.log(`      ↳ DEBUG: "${pageInfo.title}"`);
+          console.log(`        regions: [${pageInfo.regions.join(', ')}]`);
+          console.log(`        #tads: ${pageInfo.hasTads} | #bottomads: ${pageInfo.hasBottomAds} | [data-text-ad]: ${pageInfo.hasDataTextAd}`);
+          console.log(`        "Sponsored" found: ${pageInfo.hasSponsored}${pageInfo.sponsoredContext ? ' → "' + pageInfo.sponsoredContext + '"' : ''}`);
+          console.log(`        "Ad" label: ${pageInfo.adLabel || 'none'}`);
+          if (pageInfo.tadsInfo) {
+            console.log(`        #tads content: ${pageInfo.tadsInfo.childCount} children, ${pageInfo.tadsInfo.h3Count} h3s, ${pageInfo.tadsInfo.linkCount} links, ${pageInfo.tadsInfo.divCount} divs`);
+            console.log(`        #tads text: "${pageInfo.tadsInfo.innerText.slice(0, 200)}"`);
+            if (pageInfo.tadsInfo.h3Count === 0) console.log(`        #tads HTML (first 500): ${pageInfo.tadsInfo.innerHTML.slice(0, 500)}`);
+          }
+          if (pageInfo.badsInfo) {
+            console.log(`        #bottomads: ${pageInfo.badsInfo.childCount} children, ${pageInfo.badsInfo.h3Count} h3s`);
+            console.log(`        #bottomads text: "${pageInfo.badsInfo.innerText.slice(0, 200)}"`);
+          }
+          // Dump first [data-text-ad] element HTML for structure analysis
+          if (pageInfo.firstAdHtml) {
+            console.log(`        ── first [data-text-ad] HTML (${pageInfo.firstAdHtml.length} chars) ──`);
+            console.log(pageInfo.firstAdHtml);
+            console.log(`        ── end ──`);
+          }
+          console.log(`        screenshots: debug/${safeName}.png + debug/${safeName}_full.png`);
+        }
 
         // Respectful delay between searches
         if (i < keywords.length - 1) await sleep(3000 + Math.random() * 2000);
