@@ -104,7 +104,39 @@ When this skill is triggered, run the scraper script located in this skill's `sc
 Ask for (if not provided):
 - **Client name** (required) — used for output directory naming
 - **Keywords** (required) — comma-separated search terms
-- **Location** (required) — Google canonical format: `"City,State,Country"`
+- **Location** (required) — present the common locations below as selectable options (use AskUserQuestion with these as choices, plus an "Other" option for custom input):
+
+#### Common Locations (Google canonical format)
+
+**United Kingdom:**
+| Label | Value |
+|-------|-------|
+| London, UK | `London,England,United Kingdom` |
+| Manchester, UK | `Manchester,England,United Kingdom` |
+| Birmingham, UK | `Birmingham,England,United Kingdom` |
+| Edinburgh, UK | `Edinburgh,Scotland,United Kingdom` |
+
+**United States:**
+| Label | Value |
+|-------|-------|
+| New York, US | `New York,New York,United States` |
+| Los Angeles, US | `Los Angeles,California,United States` |
+| Chicago, US | `Chicago,Illinois,United States` |
+| Houston, US | `Houston,Texas,United States` |
+
+**Australia:**
+| Label | Value |
+|-------|-------|
+| Sydney, AU | `Sydney,New South Wales,Australia` |
+| Melbourne, AU | `Melbourne,Victoria,Australia` |
+
+**Canada:**
+| Label | Value |
+|-------|-------|
+| Toronto, CA | `Toronto,Ontario,Canada` |
+| Vancouver, CA | `Vancouver,British Columbia,Canada` |
+
+If the user selects "Other", ask them to provide the location in `"City,State/Region,Country"` format.
 
 ### Step 2: Run the script
 

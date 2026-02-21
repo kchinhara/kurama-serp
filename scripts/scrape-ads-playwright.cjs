@@ -77,6 +77,26 @@ const UK_TIMEZONES = {
   'England': 'Europe/London', 'Scotland': 'Europe/London', 'Wales': 'Europe/London',
 };
 
+// Common locations in Google canonical format — used as quick-select presets
+const COMMON_LOCATIONS = [
+  // UK
+  'London,England,United Kingdom',
+  'Manchester,England,United Kingdom',
+  'Birmingham,England,United Kingdom',
+  'Edinburgh,Scotland,United Kingdom',
+  // US
+  'New York,New York,United States',
+  'Los Angeles,California,United States',
+  'Chicago,Illinois,United States',
+  'Houston,Texas,United States',
+  // AU
+  'Sydney,New South Wales,Australia',
+  'Melbourne,Victoria,Australia',
+  // CA
+  'Toronto,Ontario,Canada',
+  'Vancouver,British Columbia,Canada',
+];
+
 /**
  * Encode a Google canonical location name into a UULE parameter.
  * UULE tells Google to serve results as if searching from that exact location.
